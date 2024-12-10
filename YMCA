@@ -1,0 +1,138 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Oct 17 18:16:08 2024
+Young's Modulus CSV Analyser aka YMCA
+@author: Patrick Buchanan
+date: 17/10/24
+
+Default target file 'sample_stress_strain_curve.csv'
+"""
+
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.stats import linregress
+
+def read_data(csv_file):
+    """Reads the load-distance data from a CSV file and flips negative values to positive."""
+    data = pd.read_csv(csv_file) #choose the file
+    
+    # Flip negative to positive by multiplying by -1
+    load = -data['load']
+    distance = -data['distance']
+    
+    return distance, load
+
+def find_most_inconsistent_region(distance, load, window_size=10):
+    """
+    Finds the region with the most changes in slope gradient (i.e., most inconsistent slope).
+    
+    Parameters:
+    distance (array): The distance data (corresponds to strain).
+    load (array): The load data (corresponds to stress).
+    window_size (int): The number of points in each window for slope calculation.
+    
+    Returns:
+    most_inconsistent_idx (int): The leftmost index of the region with the most inconsistent slope.
+    """
+    slope_changes = []
+
+    # Calculate the slope for each window
+    for i in range(len(distance) - window_size):
+        window_distance = distance[i:i + window_size]
+        window_load = load[i:i + window_size]
+        
+        # Perform linear regression on this window
+        slope, _, _, _, _ = linregress(window_distance, window_load)
+        slope_changes.append(slope)
+    
+    # Calculate the changes in slope (gradient differences)
+    slope_changes = np.array(slope_changes)
+    gradient_diff = np.abs(np.diff(slope_changes))
+    
+    # Identify the region with the most changes in slope gradient
+    most_inconsistent_idx = np.argmax(gradient_diff)
+    
+    print(f"Most inconsistent slope region starts at index: {most_inconsistent_idx}")
+    
+    return most_inconsistent_idx
+
+def find_highest_gradient_region(distance, load, start_idx, window_size=10):
+    """
+    Finds the window with the highest gradient (slope) before the start of the inconsistent slope region.
+    
+    Parameters:
+    distance (array): The distance data (corresponds to strain).
+    load (array): The load data (corresponds to stress).
+    start_idx (int): The index where to stop searching for high gradient.
+    window_size (int): The number of points in each window for linear regression.
+    
+    Returns:
+    best_slope (float): The highest slope found.
+    best_intercept (float): The intercept corresponding to the best slope.
+    best_linear_distance, best_linear_load (arrays): The distance and load values for the best linear region.
+    """
+    best_slope = -np.inf
+    best_intercept = 0
+    best_linear_distance = []
+    best_linear_load = []
+    
+    # Slide through windows before the start_idx
+    for i in range(max(0, start_idx - window_size), start_idx):
+        window_distance = distance[i:i + window_size]
+        window_load = load[i:i + window_size]
+        
+        # Perform linear regression on this window
+        slope, intercept, r_value, p_value, std_err = linregress(window_distance, window_load)
+        
+        # We're looking for the highest slope (steepest gradient)
+        if slope > best_slope:
+            best_slope = slope
+            best_intercept = intercept
+            best_linear_distance = window_distance
+            best_linear_load = window_load
+    
+    return best_slope, best_intercept, best_linear_distance, best_linear_load
+
+def plot_fit(distance, load, linear_distance, slope, intercept, inconsistent_idx, distance_unit="mm", load_unit="N"):
+    """Plots the original data and the linear fit only in the linear region, with units."""
+    plt.figure(figsize=(10, 6))
+    plt.scatter(distance, load, label="Original Data", s=5, color="blue")
+    
+    # Plot the linear fit only for the best linear region
+    if len(linear_distance) > 0:
+        fitted_load = slope * linear_distance + intercept
+        plt.plot(linear_distance, fitted_load, label=f'Best Linear Fit (Slope: {slope:.2f} {load_unit}/{distance_unit})', linewidth=5, color='red')
+
+    # Mark the inconsistent region (indicative of fracture)
+    plt.axvline(x=distance[inconsistent_idx], color='green', linestyle='--', label='Fracture Point')
+    plt.scatter(distance[inconsistent_idx], load[inconsistent_idx], color='orange', s=50, zorder=5, label='Fracture Point')
+
+    # Update axis labels with units
+    plt.xlabel(f'Distance ({distance_unit})')
+    plt.ylabel(f'Load ({load_unit})')
+    plt.title('Load-Distance Curve with Fracture Point and Best Linear Fit')
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
+if __name__ == "__main__":
+    # File path to the CSV file containing the load and distance data
+    csv_file = 'sample_stress_strain_curve.csv'
+    
+    # Read the data and flip from negative to positive
+    distance, load = read_data(csv_file)
+    
+    # Step 1: Find the leftmost point of the most inconsistent slope region
+    inconsistent_idx = find_most_inconsistent_region(distance, load, window_size=800)
+    
+    # Step 2: Find the window with the highest gradient to the left of the inconsistent region
+    slope, intercept, linear_distance, linear_load = find_highest_gradient_region(distance, load, inconsistent_idx, window_size=50)
+    
+    # Step 3: Plot the results
+    plot_fit(distance, load, linear_distance, slope, intercept, inconsistent_idx)
+    
+    # Print Young's Modulus (Slope)
+    print(f"Young's Modulus (Slope): {slope:.2f} MPa")
+    print(f"Intercept: {intercept:.2f} MPa")
